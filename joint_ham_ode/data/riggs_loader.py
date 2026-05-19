@@ -147,22 +147,54 @@ def prepare_data(theta: torch.Tensor, time_split: float = 0.8) -> dict:
 
 def load_preextracted(path: str, device: str = "cuda") -> torch.Tensor:
     """
-    Load pre-extracted theta saved by scripts/extract_trajectory.py.
-    Supports .pt and .npz formats.
+    Load a pre-extracted joint trajectory file.
+    Supports .pt, .npz, and .npy formats.
+
+    Expected shape: [T, N_j, 4] (quaternion) or [T, N_j, 3] (axis-angle / Euler).
+    If the last dimension is 3, the data is treated as axis-angle and converted
+    to unit quaternions via axis-angle → quaternion conversion.
     """
     if path.endswith(".pt"):
         theta = torch.load(path, map_location=device)
     elif path.endswith(".npz"):
         arr = np.load(path)
-        theta = torch.from_numpy(arr["theta"]).float().to(device)
+        # accept either key 'theta' or the first key in the archive
+        key = "theta" if "theta" in arr else list(arr.keys())[0]
+        theta = torch.from_numpy(arr[key]).float().to(device)
+    elif path.endswith(".npy"):
+        theta = torch.from_numpy(np.load(path)).float().to(device)
     else:
-        raise ValueError(f"Unsupported file format: {path}. Use .pt or .npz.")
+        raise ValueError(f"Unsupported format: {path}. Use .pt, .npz, or .npy.")
 
-    if theta.dtype != torch.float32:
-        theta = theta.float()
+    theta = theta.float()
 
-    theta = F.normalize(theta, dim=-1)
+    # Shape check and optional axis-angle → quaternion conversion
+    if theta.ndim == 3 and theta.shape[-1] == 3:
+        theta = _axis_angle_to_quat(theta)
+    elif theta.ndim == 3 and theta.shape[-1] == 4:
+        theta = F.normalize(theta, dim=-1)
+    else:
+        raise ValueError(
+            f"Unexpected trajectory shape {list(theta.shape)}. "
+            "Expected [T, N_j, 4] (quaternion) or [T, N_j, 3] (axis-angle)."
+        )
+
+    T, N_j, rot_dim = theta.shape
+    print(f"Loaded trajectory: T={T}, N_j={N_j}, rot_dim={rot_dim}  ({path})")
     return theta
+
+
+def _axis_angle_to_quat(aa: torch.Tensor) -> torch.Tensor:
+    """
+    Convert axis-angle [T, N_j, 3] to unit quaternion [T, N_j, 4] (w, x, y, z).
+    angle = ||aa||,  axis = aa / angle
+    """
+    angle = aa.norm(dim=-1, keepdim=True).clamp(min=1e-8)   # [T, N_j, 1]
+    axis  = aa / angle                                        # [T, N_j, 3]
+    half  = angle * 0.5
+    w = half.cos()
+    xyz = axis * half.sin()
+    return torch.cat([w, xyz], dim=-1)                        # [T, N_j, 4]
 
 
 def load_meta(meta_path: str) -> dict:
