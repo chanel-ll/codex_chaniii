@@ -11,7 +11,7 @@ import yaml
 
 from .models.neural_ode import JointNeuralODE
 from .models.hamiltonian_ode import JointHamiltonianODE
-from .data.riggs_loader import load_preextracted, prepare_data
+from .data.riggs_loader import load_preextracted, load_npz_full, prepare_data
 
 
 # ---------------------------------------------------------------------------
@@ -241,7 +241,13 @@ def main():
 
     # --- Load data ---
     if args.theta_path is not None:
-        theta = load_preextracted(args.theta_path, device=device)
+        timestamps = None
+        if args.theta_path.endswith(".npz"):
+            npz_data = load_npz_full(args.theta_path, device=device)
+            theta = npz_data["theta"]
+            timestamps = npz_data.get("timestamps")
+        else:
+            theta = load_preextracted(args.theta_path, device=device)
     elif args.model_path is not None:
         raise NotImplementedError(
             "Direct RigGS loading from train.py not yet implemented. "
@@ -250,7 +256,8 @@ def main():
     else:
         raise ValueError("Provide either --theta_path or --model_path.")
 
-    data = prepare_data(theta, time_split=config["data"]["time_split"])
+    data = prepare_data(theta, time_split=config["data"]["time_split"],
+                        timestamps=timestamps)
     n_joints = data["N_j"]
     print(f"Loaded trajectory: T={data['T_total']}, N_j={n_joints}, "
           f"T_train={data['T_train']}, T_extrap={data['T_extrap']}")

@@ -8,7 +8,7 @@ import yaml
 
 from .models.neural_ode import JointNeuralODE
 from .models.hamiltonian_ode import JointHamiltonianODE
-from .data.riggs_loader import load_preextracted, prepare_data
+from .data.riggs_loader import load_preextracted, load_npz_full, prepare_data
 from .train import build_model
 from .utils.eval_utils import evaluate, compute_joint_mae, compute_energy_metrics
 
@@ -49,8 +49,15 @@ def main():
     print(f"Loaded {model_type} from {args.checkpoint}")
 
     # --- Load data ---
-    theta = load_preextracted(args.theta_path, device=device)
-    data = prepare_data(theta, time_split=config["data"]["time_split"])
+    timestamps = None
+    if args.theta_path.endswith(".npz"):
+        npz_data = load_npz_full(args.theta_path, device=device)
+        theta = npz_data["theta"]
+        timestamps = npz_data.get("timestamps")
+    else:
+        theta = load_preextracted(args.theta_path, device=device)
+    data = prepare_data(theta, time_split=config["data"]["time_split"],
+                        timestamps=timestamps)
     N_j, rot_dim = data["N_j"], data["rot_dim"]
     print(f"T_total={data['T_total']}  T_train={data['T_train']}  T_extrap={data['T_extrap']}")
 
