@@ -150,20 +150,32 @@ python -m joint_ham_ode.evaluate \
 
 #### 렌더링 평가 포함 (PSNR / LPIPS / MP4)
 
-`--riggs_model_path` 를 추가하면 RigGS로 실제 렌더링 후 이미지·영상까지 저장합니다.
+`--riggs_model_path`와 `--dataset_path`를 추가하면 **joint_ode 환경만으로** (RigGS conda 환경 불필요)
+실제 렌더링 후 이미지·영상까지 저장합니다.
+
+| 인자 | 가리키는 경로 | 포함 내용 |
+|---|---|---|
+| `--riggs_model_path` | RigGS output 루트 | `point_cloud/`, `skeleton/`, `skeleton_tree.npz` |
+| `--dataset_path` | D-NeRF 데이터셋 루트 | `transforms_train.json`, GT 이미지 |
 
 ```bash
 TRAJ=/home/airlab/RigGS/output/standup/standup_node/train/ours_100000/joint_trajectory.npz
 RIGGS=/home/airlab/RigGS/output/standup/standup_node
+DATA=/home/airlab/data/standup          # transforms_train.json + GT 이미지 위치
 
 python -m joint_ham_ode.evaluate \
     --checkpoint output/standup/neural_ode/model_final.pt \
     --theta_path $TRAJ \
     --output_dir output/standup/neural_ode \
     --riggs_model_path $RIGGS \
+    --dataset_path $DATA \
+    --image_size 800 \
+    --background 0.0 \
     --render_fps 10 \
     --device cuda
 ```
+
+> `--dataset_path` 없이 실행하면 렌더링은 되지만 GT 이미지가 없어 PSNR/LPIPS는 계산되지 않습니다.
 
 ### 출력 결과
 
