@@ -1,14 +1,45 @@
+# ── Core deep learning ──────────────────────────────────────────────────────
 torch>=2.0.0
 torchvision>=0.15.0
 torchdiffeq>=0.2.3
-numpy>=1.24.0
-scipy>=1.10.0
+
+# ── Scientific / numeric ────────────────────────────────────────────────────
+numpy>=1.22.0
+scipy>=1.10.1
+
+# ── Computer vision & image quality ─────────────────────────────────────────
+opencv-python>=4.5.5
+Pillow>=9.0.0
+scikit-image
+lpips>=0.1.4
+piq                         # PSNR / SSIM / LPIPS utilities
+pytorch_msssim              # MS-SSIM loss
+git+https://github.com/Po-Hsun-Su/pytorch-ssim.git
+
+# ── 3D / rendering ──────────────────────────────────────────────────────────
+plyfile>=0.8.1              # load point_cloud.ply
+openmesh                    # mesh I/O (optional, used by some RigGS utilities)
+git+https://github.com/facebookresearch/pytorch3d.git
+
+# diff-gaussian-rasterization + simple-knn are RigGS submodules.
+# Install them from the RigGS repo root:
+#   pip install ./submodules/diff-gaussian-rasterization
+#   pip install ./submodules/simple-knn
+#
+# gsplat is kept as a fallback rasterizer (pure pip):
+gsplat>=1.0.0
+
+# ── Configuration / logging ──────────────────────────────────────────────────
 pyyaml>=6.0
 omegaconf>=2.3.0
-lpips>=0.1.4
+tensorboard>=2.14.0
+tqdm>=4.66.1
 matplotlib>=3.7.0
+
+# ── Video / image I/O ────────────────────────────────────────────────────────
 imageio>=2.31.0
+imageio-ffmpeg              # ffmpeg backend for imageio MP4 export
 imageio[ffmpeg]
-Pillow>=9.0.0
-plyfile>=0.8.1
-gsplat>=1.0.0
+
+# ── GUI (optional, used by some RigGS viewer scripts) ────────────────────────
+dearpygui

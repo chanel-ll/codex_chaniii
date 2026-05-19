@@ -8,17 +8,29 @@
 conda create -n joint_ode python=3.9
 conda activate joint_ode
 
+# PyTorch (CUDA 11.8 기준)
 pip install torch==2.0.1 torchvision==0.15.2 --index-url https://download.pytorch.org/whl/cu118
+
+# 일반 패키지
 pip install -r requirements.txt
+
+# 3DGS 렌더러 (RigGS repo 루트에서 실행)
+# diff-gaussian-rasterization: 실제 Gaussian rasterizer (렌더링 필수)
+pip install --no-build-isolation /path/to/RigGS/submodules/diff-gaussian-rasterization
+pip install /path/to/RigGS/submodules/simple-knn
 ```
+
+> **렌더링 백엔드 우선순위**
+> 1. `diff-gaussian-rasterization` (3DGS/RigGS 동일 CUDA 래스터라이저, 권장)
+> 2. `gsplat` (pure-pip 대체재, diff-gaussian-rasterization 없을 때 자동 사용)
 
 ### 입력 데이터
 
-RigGS가 출력한 `joint_trajectory.npy` 파일을 입력으로 사용합니다.
+RigGS가 출력한 `joint_trajectory.npz` 파일을 입력으로 사용합니다.
 
 ```
-예시 경로: /home/airlab/RigGS/output/standup/standup_node/train/ours_100000/joint_trajectory.npy
-형식: numpy array, shape [T, N_j, 4] (quaternion) 또는 [T, N_j, 3] (axis-angle)
+예시 경로: /home/airlab/RigGS/output/standup/standup_node/train/ours_100000/joint_trajectory.npz
+형식: numpy npz — joint_rotation [T, N_j, 4] (quaternion), timestamps [T], parent_indices [N_j]
 ```
 
 ---
