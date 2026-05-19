@@ -100,7 +100,8 @@ def _central_diff(x: torch.Tensor, dt: float) -> torch.Tensor:
     return dx
 
 
-def prepare_data(theta: torch.Tensor, time_split: float = 0.8) -> dict:
+def prepare_data(theta: torch.Tensor, time_split: float = 0.8,
+                 timestamps: torch.Tensor = None) -> dict:
     """
     Split trajectory into train (obs) and extrapolation windows.
     Default 8:2 split matches ODE-GS D-NeRF benchmark.
@@ -109,6 +110,8 @@ def prepare_data(theta: torch.Tensor, time_split: float = 0.8) -> dict:
     Args:
         theta:      [T, N_j, 4]  quaternion trajectory
         time_split: fraction used for training (default 0.8)
+        timestamps: [T] float tensor (0~1). If None, linspace is used.
+                    Pass data['timestamps'] from load_npz_full() when available.
 
     Returns dict with tensors on the same device as theta.
     """
@@ -120,8 +123,12 @@ def prepare_data(theta: torch.Tensor, time_split: float = 0.8) -> dict:
     theta_train = theta_flat[:T_train]          # [T_train, N_j*4]
     theta_extrap = theta_flat[T_train:]         # [T_extrap, N_j*4]
 
-    dt = 1.0 / T
-    t_all = torch.linspace(0.0, (T - 1) * dt, T, device=theta.device)
+    if timestamps is not None:
+        t_all = timestamps.to(theta.device)
+        dt = float((t_all[-1] - t_all[0]) / (T - 1)) if T > 1 else 1.0 / T
+    else:
+        dt = 1.0 / T
+        t_all = torch.linspace(0.0, (T - 1) * dt, T, device=theta.device)
     t_train = t_all[:T_train]
     t_extrap = t_all[T_train:]
 
@@ -150,25 +157,69 @@ def load_preextracted(path: str, device: str = "cuda") -> torch.Tensor:
     Load a pre-extracted joint trajectory file.
     Supports .pt, .npz, and .npy formats.
 
+    For .npz files, expects a 'joint_rotation' key (RigGS output format).
+    Falls back to 'theta' key, then the first key in the archive.
+
     Expected shape: [T, N_j, 4] (quaternion) or [T, N_j, 3] (axis-angle / Euler).
     If the last dimension is 3, the data is treated as axis-angle and converted
     to unit quaternions via axis-angle → quaternion conversion.
     """
+    theta, _ = _load_npz_or_other(path, device)
+    return theta
+
+
+def load_npz_full(path: str, device: str = "cuda") -> dict:
+    """
+    Load joint_trajectory.npz and return all available arrays.
+
+    Returns dict with keys:
+        theta           [T, N_j, 4]  unit quaternions  (required)
+        timestamps      [T]          float, 0.0~1.0    (if present)
+        joint_position  [T, N_j, 3] world-space xyz   (if present)
+        parent_indices  [N_j]        int64             (if present)
+    """
+    if not path.endswith(".npz"):
+        raise ValueError("load_npz_full() only supports .npz files.")
+
+    arr = np.load(path)
+    theta, _ = _load_npz_or_other(path, device)
+
+    out = {"theta": theta}
+    if "timestamps" in arr:
+        out["timestamps"] = torch.from_numpy(arr["timestamps"]).float().to(device)
+    if "joint_position" in arr:
+        out["joint_position"] = torch.from_numpy(arr["joint_position"]).float().to(device)
+    if "parent_indices" in arr:
+        out["parent_indices"] = torch.from_numpy(arr["parent_indices"]).long().to(device)
+
+    T, N_j, rot_dim = theta.shape
+    print(f"Loaded trajectory: T={T}, N_j={N_j}, rot_dim={rot_dim}  ({path})")
+    return out
+
+
+def _load_npz_or_other(path: str, device: str) -> tuple:
+    """Internal loader; returns (theta_tensor, raw_arr_or_None)."""
     if path.endswith(".pt"):
         theta = torch.load(path, map_location=device)
+        raw = None
     elif path.endswith(".npz"):
-        arr = np.load(path)
-        # accept either key 'theta' or the first key in the archive
-        key = "theta" if "theta" in arr else list(arr.keys())[0]
-        theta = torch.from_numpy(arr[key]).float().to(device)
+        raw = np.load(path)
+        # priority: joint_rotation (RigGS) > theta > first key
+        if "joint_rotation" in raw:
+            key = "joint_rotation"
+        elif "theta" in raw:
+            key = "theta"
+        else:
+            key = list(raw.keys())[0]
+        theta = torch.from_numpy(raw[key]).float().to(device)
     elif path.endswith(".npy"):
         theta = torch.from_numpy(np.load(path)).float().to(device)
+        raw = None
     else:
         raise ValueError(f"Unsupported format: {path}. Use .pt, .npz, or .npy.")
 
     theta = theta.float()
 
-    # Shape check and optional axis-angle → quaternion conversion
     if theta.ndim == 3 and theta.shape[-1] == 3:
         theta = _axis_angle_to_quat(theta)
     elif theta.ndim == 3 and theta.shape[-1] == 4:
@@ -179,9 +230,11 @@ def load_preextracted(path: str, device: str = "cuda") -> torch.Tensor:
             "Expected [T, N_j, 4] (quaternion) or [T, N_j, 3] (axis-angle)."
         )
 
-    T, N_j, rot_dim = theta.shape
-    print(f"Loaded trajectory: T={T}, N_j={N_j}, rot_dim={rot_dim}  ({path})")
-    return theta
+    if not path.endswith(".npz"):
+        T, N_j, rot_dim = theta.shape
+        print(f"Loaded trajectory: T={T}, N_j={N_j}, rot_dim={rot_dim}  ({path})")
+
+    return theta, raw
 
 
 def _axis_angle_to_quat(aa: torch.Tensor) -> torch.Tensor:
