@@ -60,7 +60,7 @@ RigGS가 출력한 `joint_trajectory.npz` 파일을 입력으로 사용합니다
 ```bash
 python -m joint_ham_ode.train \
     --config joint_ham_ode/configs/neural_ode.yaml \
-    --theta_path /home/airlab/RigGS/output/standup/standup_node/train/ours_100000/joint_trajectory.npy \
+    --theta_path /home/airlab/RigGS/output/standup/standup_node/train/ours_100000/joint_trajectory.npz \
     --output_dir output/standup/neural_ode \
     --device cuda
 ```
@@ -111,7 +111,7 @@ dynamics:  dq/dt = p
 ```bash
 python -m joint_ham_ode.train \
     --config joint_ham_ode/configs/hamiltonian_ode.yaml \
-    --theta_path /home/airlab/RigGS/output/standup/standup_node/train/ours_100000/joint_trajectory.npy \
+    --theta_path /home/airlab/RigGS/output/standup/standup_node/train/ours_100000/joint_trajectory.npz \
     --output_dir output/standup/ham_ode \
     --device cuda
 ```
