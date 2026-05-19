@@ -16,11 +16,12 @@ pip install -r requirements.txt
 
 pip install git+https://github.com/facebookresearch/pytorch3d.git
 (or https://github.com/facebookresearch/pytorch3d/blob/main/INSTALL.md 참고)
+# conda install pytorch3d -c pytorch3d -c pytorch -c conda-forge
 
 # 3DGS 렌더러 (RigGS repo 루트에서 실행)
 # diff-gaussian-rasterization: 실제 Gaussian rasterizer (렌더링 필수)
-pip install --no-build-isolation /path/to/RigGS/submodules/diff-gaussian-rasterization
-pip install /path/to/RigGS/submodules/simple-knn
+pip install ./submodules/diff-gaussian-rasterization --no-build-isolation
+pip install ./submodules/simple-knn --no-build-isolation
 ```
 
 > **렌더링 백엔드 우선순위**
