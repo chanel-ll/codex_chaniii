@@ -8,17 +8,29 @@
 conda create -n joint_ode python=3.9
 conda activate joint_ode
 
+# PyTorch (CUDA 11.8 기준)
 pip install torch==2.0.1 torchvision==0.15.2 --index-url https://download.pytorch.org/whl/cu118
+
+# 일반 패키지
 pip install -r requirements.txt
+
+# 3DGS 렌더러 (RigGS repo 루트에서 실행)
+# diff-gaussian-rasterization: 실제 Gaussian rasterizer (렌더링 필수)
+pip install --no-build-isolation /path/to/RigGS/submodules/diff-gaussian-rasterization
+pip install /path/to/RigGS/submodules/simple-knn
 ```
+
+> **렌더링 백엔드 우선순위**
+> 1. `diff-gaussian-rasterization` (3DGS/RigGS 동일 CUDA 래스터라이저, 권장)
+> 2. `gsplat` (pure-pip 대체재, diff-gaussian-rasterization 없을 때 자동 사용)
 
 ### 입력 데이터
 
-RigGS가 출력한 `joint_trajectory.npy` 파일을 입력으로 사용합니다.
+RigGS가 출력한 `joint_trajectory.npz` 파일을 입력으로 사용합니다.
 
 ```
-예시 경로: /home/airlab/RigGS/output/standup/standup_node/train/ours_100000/joint_trajectory.npy
-형식: numpy array, shape [T, N_j, 4] (quaternion) 또는 [T, N_j, 3] (axis-angle)
+예시 경로: /home/airlab/RigGS/output/standup/standup_node/train/ours_100000/joint_trajectory.npz
+형식: numpy npz — joint_rotation [T, N_j, 4] (quaternion), timestamps [T], parent_indices [N_j]
 ```
 
 ---
@@ -130,21 +142,52 @@ Model: hamiltonian_ode  params: 527,617
 
 ### 평가 실행
 
+#### Joint MAE만 (렌더링 없음)
+
 ```bash
-# Neural ODE 평가
+# Neural ODE
 python -m joint_ham_ode.evaluate \
     --checkpoint output/standup/neural_ode/model_final.pt \
-    --theta_path /home/airlab/RigGS/output/standup/standup_node/train/ours_100000/joint_trajectory.npy \
+    --theta_path /home/airlab/RigGS/output/standup/standup_node/train/ours_100000/joint_trajectory.npz \
     --output_dir output/standup/neural_ode \
     --device cuda
 
-# Hamiltonian ODE 평가
+# Hamiltonian ODE
 python -m joint_ham_ode.evaluate \
     --checkpoint output/standup/ham_ode/model_final.pt \
-    --theta_path /home/airlab/RigGS/output/standup/standup_node/train/ours_100000/joint_trajectory.npy \
+    --theta_path /home/airlab/RigGS/output/standup/standup_node/train/ours_100000/joint_trajectory.npz \
     --output_dir output/standup/ham_ode \
     --device cuda
 ```
+
+#### 렌더링 평가 포함 (PSNR / LPIPS / MP4)
+
+`--riggs_model_path`와 `--dataset_path`를 추가하면 **joint_ode 환경만으로** (RigGS conda 환경 불필요)
+실제 렌더링 후 이미지·영상까지 저장합니다.
+
+| 인자 | 가리키는 경로 | 포함 내용 |
+|---|---|---|
+| `--riggs_model_path` | RigGS output 루트 | `point_cloud/`, `skeleton/`, `skeleton_tree.npz` |
+| `--dataset_path` | D-NeRF 데이터셋 루트 | `transforms_train.json`, GT 이미지 |
+
+```bash
+TRAJ=/home/airlab/RigGS/output/standup/standup_node/train/ours_100000/joint_trajectory.npz
+RIGGS=/home/airlab/RigGS/output/standup/standup_node
+DATA=/home/airlab/data/standup          # transforms_train.json + GT 이미지 위치
+
+python -m joint_ham_ode.evaluate \
+    --checkpoint output/standup/neural_ode/model_final.pt \
+    --theta_path $TRAJ \
+    --output_dir output/standup/neural_ode \
+    --riggs_model_path $RIGGS \
+    --dataset_path $DATA \
+    --image_size 800 \
+    --background 0.0 \
+    --render_fps 10 \
+    --device cuda
+```
+
+> `--dataset_path` 없이 실행하면 렌더링은 되지만 GT 이미지가 없어 PSNR/LPIPS는 계산되지 않습니다.
 
 ### 출력 결과
 
@@ -156,18 +199,34 @@ python -m joint_ham_ode.evaluate \
 === Energy Conservation (extrap) ===   ← Hamiltonian만
   ΔH_mean: 0.001234
   ΔH_max:  0.003421
+
+=== Rendering Evaluation ===
+  [interp]  PSNR=28.41 dB  LPIPS=0.0823
+  [extrap]  PSNR=24.17 dB  LPIPS=0.1241
 ```
 
 ### 저장되는 파일
 
 ```
 output/standup/ham_ode/
-├── model_final.pt              # 최종 모델 체크포인트
-├── history.json                # epoch별 loss 기록
-├── eval_results.json           # 평가 지표 (JSON)
-├── mae_per_joint_interp.pt     # joint별 MAE (학습 구간)
-├── mae_per_joint_extrap.pt     # joint별 MAE (외삽 구간)
-└── H_extrap.pt                 # 에너지 곡선 (Hamiltonian만)
+├── model_final.pt                     # 최종 모델 체크포인트
+├── history.json                       # epoch별 loss 기록
+├── eval_results.json                  # 전체 평가 지표 (JSON)
+├── mae_per_joint_interp.pt            # joint별 MAE (학습 구간)
+├── mae_per_joint_extrap.pt            # joint별 MAE (외삽 구간)
+├── H_extrap.pt                        # 에너지 곡선 (Hamiltonian만)
+├── render_interp/
+│   ├── pred/          pred_0000.png … # 예측 렌더링 이미지
+│   ├── gt/            gt_0000.png …   # GT 이미지
+│   ├── comparison/    cmp_0000.png …  # pred | gt 비교 이미지
+│   ├── pred_interp.mp4                # 예측 렌더링 영상
+│   └── comparison_interp.mp4         # pred | gt 비교 영상
+└── render_extrap/
+    ├── pred/          pred_0000.png …
+    ├── gt/            gt_0000.png …
+    ├── comparison/    cmp_0000.png …
+    ├── pred_extrap.mp4                # ← 핵심: 외삽 구간 렌더링 영상
+    └── comparison_extrap.mp4         # ← 핵심: 외삽 구간 비교 영상
 ```
 
 ---
