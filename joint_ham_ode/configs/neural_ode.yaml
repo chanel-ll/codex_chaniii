@@ -1,0 +1,30 @@
+model_type: neural_ode
+
+model:
+  latent_dim: 64
+  d_model: 128
+  nhead: 8
+  num_enc_layers: 4
+  ode_nhidden: 256
+  ode_layers: 3
+  decoder_nhidden: 128
+  activation: tanh
+  kl_beta: 1.0e-3
+
+ode:
+  method: rk4
+  rtol: 1.0e-4
+  atol: 1.0e-6
+
+training:
+  epochs: 2000
+  lr: 1.0e-3
+  min_lr: 1.0e-6
+  clip_grad_norm: 1.0
+  log_every: 50
+  save_every: 500
+  scheduler: cosine_annealing   # cosine_annealing | reduce_on_plateau
+
+data:
+  time_split: 0.8    # 8:2 train/extrap — matches ODE-GS D-NeRF benchmark
+  rot_dim: 4         # quaternion

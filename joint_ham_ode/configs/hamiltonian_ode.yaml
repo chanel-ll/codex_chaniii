@@ -1,0 +1,27 @@
+model_type: hamiltonian_ode
+
+model:
+  hidden_dim: 256
+  n_layers: 3
+  activation: tanh
+  use_adjoint: true
+
+ode:
+  method: rk4
+  rtol: 1.0e-4
+  atol: 1.0e-6
+
+training:
+  epochs: 2000
+  lr: 1.0e-3
+  min_lr: 1.0e-6
+  clip_grad_norm: 1.0
+  lambda_energy: 0.01
+  energy_subsample: 5    # compute H every Nth timestep during training
+  log_every: 50
+  save_every: 500
+  scheduler: cosine_annealing
+
+data:
+  time_split: 0.8    # 8:2 train/extrap — matches ODE-GS D-NeRF benchmark
+  rot_dim: 4
