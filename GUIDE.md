@@ -14,6 +14,9 @@ pip install torch==2.0.1 torchvision==0.15.2 --index-url https://download.pytorc
 # 일반 패키지
 pip install -r requirements.txt
 
+pip install git+https://github.com/facebookresearch/pytorch3d.git
+(or https://github.com/facebookresearch/pytorch3d/blob/main/INSTALL.md 참고)
+
 # 3DGS 렌더러 (RigGS repo 루트에서 실행)
 # diff-gaussian-rasterization: 실제 Gaussian rasterizer (렌더링 필수)
 pip install --no-build-isolation /path/to/RigGS/submodules/diff-gaussian-rasterization
