@@ -177,7 +177,7 @@ python -m joint_ham_ode.evaluate \
 ```bash
 TRAJ=/home/airlab/RigGS/output/standup/standup_node/train/ours_100000/joint_trajectory.npz
 RIGGS=/home/airlab/RigGS/output/standup/standup_node
-DATA=/home/airlab/data/standup          # transforms_train.json + GT 이미지 위치
+DATA=/home/airlab/RigGS/data/dy_syn_data/standup          # transforms_train.json + GT 이미지 위치
 
 python -m joint_ham_ode.evaluate \
     --checkpoint output/standup/neural_ode/model_final.pt \
