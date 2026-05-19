@@ -7,3 +7,6 @@ pyyaml>=6.0
 omegaconf>=2.3.0
 lpips>=0.1.4
 matplotlib>=3.7.0
+imageio>=2.31.0
+imageio[ffmpeg]
+Pillow>=9.0.0

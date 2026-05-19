@@ -130,19 +130,38 @@ Model: hamiltonian_ode  params: 527,617
 
 ### 평가 실행
 
+#### Joint MAE만 (렌더링 없음)
+
 ```bash
-# Neural ODE 평가
+# Neural ODE
 python -m joint_ham_ode.evaluate \
     --checkpoint output/standup/neural_ode/model_final.pt \
-    --theta_path /home/airlab/RigGS/output/standup/standup_node/train/ours_100000/joint_trajectory.npy \
+    --theta_path /home/airlab/RigGS/output/standup/standup_node/train/ours_100000/joint_trajectory.npz \
     --output_dir output/standup/neural_ode \
     --device cuda
 
-# Hamiltonian ODE 평가
+# Hamiltonian ODE
 python -m joint_ham_ode.evaluate \
     --checkpoint output/standup/ham_ode/model_final.pt \
-    --theta_path /home/airlab/RigGS/output/standup/standup_node/train/ours_100000/joint_trajectory.npy \
+    --theta_path /home/airlab/RigGS/output/standup/standup_node/train/ours_100000/joint_trajectory.npz \
     --output_dir output/standup/ham_ode \
+    --device cuda
+```
+
+#### 렌더링 평가 포함 (PSNR / LPIPS / MP4)
+
+`--riggs_model_path` 를 추가하면 RigGS로 실제 렌더링 후 이미지·영상까지 저장합니다.
+
+```bash
+TRAJ=/home/airlab/RigGS/output/standup/standup_node/train/ours_100000/joint_trajectory.npz
+RIGGS=/home/airlab/RigGS/output/standup/standup_node
+
+python -m joint_ham_ode.evaluate \
+    --checkpoint output/standup/neural_ode/model_final.pt \
+    --theta_path $TRAJ \
+    --output_dir output/standup/neural_ode \
+    --riggs_model_path $RIGGS \
+    --render_fps 10 \
     --device cuda
 ```
 
@@ -156,18 +175,34 @@ python -m joint_ham_ode.evaluate \
 === Energy Conservation (extrap) ===   ← Hamiltonian만
   ΔH_mean: 0.001234
   ΔH_max:  0.003421
+
+=== Rendering Evaluation ===
+  [interp]  PSNR=28.41 dB  LPIPS=0.0823
+  [extrap]  PSNR=24.17 dB  LPIPS=0.1241
 ```
 
 ### 저장되는 파일
 
 ```
 output/standup/ham_ode/
-├── model_final.pt              # 최종 모델 체크포인트
-├── history.json                # epoch별 loss 기록
-├── eval_results.json           # 평가 지표 (JSON)
-├── mae_per_joint_interp.pt     # joint별 MAE (학습 구간)
-├── mae_per_joint_extrap.pt     # joint별 MAE (외삽 구간)
-└── H_extrap.pt                 # 에너지 곡선 (Hamiltonian만)
+├── model_final.pt                     # 최종 모델 체크포인트
+├── history.json                       # epoch별 loss 기록
+├── eval_results.json                  # 전체 평가 지표 (JSON)
+├── mae_per_joint_interp.pt            # joint별 MAE (학습 구간)
+├── mae_per_joint_extrap.pt            # joint별 MAE (외삽 구간)
+├── H_extrap.pt                        # 에너지 곡선 (Hamiltonian만)
+├── render_interp/
+│   ├── pred/          pred_0000.png … # 예측 렌더링 이미지
+│   ├── gt/            gt_0000.png …   # GT 이미지
+│   ├── comparison/    cmp_0000.png …  # pred | gt 비교 이미지
+│   ├── pred_interp.mp4                # 예측 렌더링 영상
+│   └── comparison_interp.mp4         # pred | gt 비교 영상
+└── render_extrap/
+    ├── pred/          pred_0000.png …
+    ├── gt/            gt_0000.png …
+    ├── comparison/    cmp_0000.png …
+    ├── pred_extrap.mp4                # ← 핵심: 외삽 구간 렌더링 영상
+    └── comparison_extrap.mp4         # ← 핵심: 외삽 구간 비교 영상
 ```
 
 ---
