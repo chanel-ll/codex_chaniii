@@ -19,13 +19,14 @@ try:
         GaussianRasterizer,
     )
     DGR_AVAILABLE = True
-except ImportError:
+except Exception as _dgr_err:
     DGR_AVAILABLE = False
+    _dgr_err_msg = str(_dgr_err)
 
 try:
     from gsplat import rasterization as _gsplat_rasterization
     GSPLAT_AVAILABLE = True
-except ImportError:
+except Exception:
     GSPLAT_AVAILABLE = False
 
 # Print backend selection once at import time so the user can verify
@@ -33,6 +34,8 @@ if DGR_AVAILABLE:
     print("[gaussian_renderer] Backend: diff-gaussian-rasterization (3DGS/RigGS native)")
 elif GSPLAT_AVAILABLE:
     print("[gaussian_renderer] Backend: gsplat (fallback — diff-gaussian-rasterization not found)")
+    if not DGR_AVAILABLE:
+        print(f"[gaussian_renderer]   diff-gaussian-rasterization import failed: {_dgr_err_msg}")
 else:
     print("[gaussian_renderer] WARNING: no rasterizer installed. "
           "Run: pip install ./submodules/diff-gaussian-rasterization")
