@@ -141,6 +141,7 @@ def _run_skinning_mlp(state: dict, canonical_xyz: torch.Tensor,
 
 def load_lbs_weights(skeleton_dir: str, n_joints: int,
                       canonical_xyz: torch.Tensor = None,
+                      motion_mask_from_ply: torch.Tensor = None,
                       device: str = "cpu") -> dict:
     """
     Compute per-Gaussian skinning weights from the RigGS skeleton checkpoint.
@@ -150,16 +151,23 @@ def load_lbs_weights(skeleton_dir: str, n_joints: int,
     This function reconstructs that MLP and runs a forward pass with the
     canonical Gaussian positions to produce [N_gauss, N_joints] weights.
 
+    Also extracts the trained joint positions (nodes) from skeleton.pth, which
+    may differ from the template positions in skeleton_tree.npz after training.
+
     Args:
-        skeleton_dir:  Path to <riggs_output>/skeleton/ directory
-        n_joints:      Number of skeleton joints (must match MLP output dim)
-        canonical_xyz: [N, 3] canonical Gaussian positions.
-                       If None, attempts to load gs__xyz from the state dict.
-        device:        Target device for output tensors
+        skeleton_dir:        Path to <riggs_output>/skeleton/ directory
+        n_joints:            Number of skeleton joints (must match MLP output dim)
+        canonical_xyz:       [N, 3] canonical Gaussian positions.
+                             If None, attempts to load gs__xyz from the state dict.
+        motion_mask_from_ply: [N] float32 motion mask from PLY fea_* attributes.
+                             If provided, used as motion_mask; otherwise all-ones bool.
+        device:              Target device for output tensors
 
     Returns dict:
-        lbs_weights   [N_gauss, N_j]  float32  per-Gaussian skinning weights (softmax)
-        motion_mask   [N_gauss]       bool     all True (RigGS uses the MLP for all Gaussians)
+        lbs_weights    [N_gauss, N_j]  float32  per-Gaussian skinning weights (softmax)
+        motion_mask    [N_gauss]       float32  per-Gaussian motion participation weight
+        trained_joints [N_j, 3]        float32  trained joint positions from skeleton.pth
+                                                (None if not found in state dict)
     """
     # --- Find latest iteration directory ---
     iter_dirs = sorted(glob.glob(os.path.join(skeleton_dir, "iteration_*")))
@@ -184,6 +192,16 @@ def load_lbs_weights(skeleton_dir: str, n_joints: int,
     if state is None:
         raise RuntimeError(f"Could not load any checkpoint from {latest}")
 
+    # --- Extract trained joint positions from state dict ---
+    # RigGS SkeletonWarp stores nodes as nn.Parameter named "nodes" [N_j, ≥3]
+    trained_joints = None
+    if "nodes" in state:
+        trained_joints = state["nodes"][:, :3].float()
+        print(f"  Trained joints loaded from state dict: {trained_joints.shape}")
+    else:
+        print("  Warning: 'nodes' key not found in skeleton state dict — "
+              "falling back to template joints from skeleton_tree.npz")
+
     # --- Canonical Gaussian positions (needed as MLP input) ---
     if canonical_xyz is None:
         # RigGS saves Gaussian params inside the skeleton state dict under gs__* keys
@@ -203,13 +221,18 @@ def load_lbs_weights(skeleton_dir: str, n_joints: int,
     print(f"  Running skinning_weight_mlp for {canonical_xyz.shape[0]} Gaussians…")
     lbs_weights = _run_skinning_mlp(state, canonical_xyz, n_joints)
 
-    # --- Motion mask (all Gaussians participate) ---
-    motion_mask = torch.ones(lbs_weights.shape[0], dtype=torch.bool)
+    # --- Motion mask ---
+    if motion_mask_from_ply is not None:
+        motion_mask = motion_mask_from_ply.float()
+        print(f"  Using motion_mask from PLY fea_* attributes")
+    else:
+        motion_mask = torch.ones(lbs_weights.shape[0], dtype=torch.float32)
 
     print(f"  LBS weights: {lbs_weights.shape}")
     return {
-        "lbs_weights": lbs_weights.to(device),
-        "motion_mask": motion_mask.to(device),
+        "lbs_weights":    lbs_weights.to(device),
+        "motion_mask":    motion_mask.to(device),
+        "trained_joints": trained_joints.to(device) if trained_joints is not None else None,
     }
 
 

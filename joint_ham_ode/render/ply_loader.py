@@ -65,12 +65,26 @@ def load_3dgs_ply(path: str, device: str = "cpu") -> dict:
     )
     rotation = np.stack([np.asarray(v[n]) for n in rot_names], axis=1)  # [N, 4] (w,x,y,z)
 
+    # fea_* attributes: RigGS stores skinning features + motion_mask as last channel
+    fea_names = sorted(
+        [p.name for p in v.properties if p.name.startswith("fea_")],
+        key=lambda n: int(n.split("_")[-1]),
+    )
+    if fea_names:
+        fea = np.stack([np.asarray(v[n]) for n in fea_names], axis=1)  # [N, fea_dim]
+        motion_mask = 1.0 / (1.0 + np.exp(-fea[:, -1]))                # sigmoid of last channel
+        print(f"  fea_* attributes: {len(fea_names)} dims → motion_mask loaded")
+    else:
+        motion_mask = np.ones(N, dtype=np.float32)
+        print(f"  No fea_* attributes found — motion_mask set to all-ones")
+
     print(f"Loaded {N} Gaussians (sh_degree={sh_degree}) from {path}")
     return {
-        "xyz":       torch.from_numpy(xyz).float().to(device),
-        "features":  torch.from_numpy(features).float().to(device),
-        "opacity":   torch.from_numpy(opacity).float().to(device),
-        "scaling":   torch.from_numpy(scaling).float().to(device),
-        "rotation":  torch.from_numpy(rotation).float().to(device),
-        "sh_degree": sh_degree,
+        "xyz":         torch.from_numpy(xyz).float().to(device),
+        "features":    torch.from_numpy(features).float().to(device),
+        "opacity":     torch.from_numpy(opacity).float().to(device),
+        "scaling":     torch.from_numpy(scaling).float().to(device),
+        "rotation":    torch.from_numpy(rotation).float().to(device),
+        "sh_degree":   sh_degree,
+        "motion_mask": torch.from_numpy(motion_mask.astype(np.float32)).to(device),  # [N]
     }
