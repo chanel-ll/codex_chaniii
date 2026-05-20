@@ -71,9 +71,11 @@ def _load_standalone_render_assets(args, device):
     skel = load_skeleton_tree(os.path.join(riggs_dir, "skeleton_tree.npz"), device=device)
 
     # skinning weights from skeleton/iteration_XXXX/
+    # canonical_xyz is passed so the skinning_weight_mlp can be run
     lbs = load_lbs_weights(
         os.path.join(riggs_dir, "skeleton"),
         n_joints=skel["joints"].shape[0],
+        canonical_xyz=gaussians["xyz"].cpu(),
         device=device,
     )
 
@@ -102,7 +104,7 @@ def _load_standalone_render_assets(args, device):
 
 def _run_rendering(gaussians, skel, lbs, cameras_all, background,
                     q_interp, q_extrap, T_train, output_dir, fps, device):
-    from .render.gsplat_renderer import render_trajectory
+    from .render.gaussian_renderer import render_trajectory
     from .render.camera_utils import load_gt_image
 
     results = {}

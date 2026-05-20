@@ -1,9 +1,12 @@
 """Load skeleton structure and LBS skinning weights from RigGS output."""
 
 import os
+import re
 import glob
 import numpy as np
 import torch
+import torch.nn as nn
+import torch.nn.functional as F
 
 
 def load_skeleton_tree(npz_path: str, device: str = "cpu") -> dict:
@@ -21,103 +24,214 @@ def load_skeleton_tree(npz_path: str, device: str = "cpu") -> dict:
     return {"joints": joints, "parents": parents}
 
 
-def load_lbs_weights(skeleton_dir: str, n_joints: int, device: str = "cpu") -> dict:
-    """
-    Load per-Gaussian skinning weights from the skeleton output directory.
+# ---------------------------------------------------------------------------
+# Skinning weight MLP helpers
+# ---------------------------------------------------------------------------
 
-    RigGS saves skeleton model state dicts under skeleton/iteration_XXXX/.
-    This function:
-      1. Finds the latest iteration directory.
-      2. Loads the state dict (.pth / .pt file).
-      3. Extracts the weight tensor by trying common key names.
+def _positional_encoding(xyz: torch.Tensor, n_freqs: int) -> torch.Tensor:
+    """
+    Sinusoidal positional encoding used by NeRF-style MLPs.
+    xyz: [N, 3]  →  [N, 3*(2*n_freqs + 1)]
+    """
+    parts = [xyz]
+    for k in range(n_freqs):
+        freq = 2.0 ** k
+        parts.append(torch.sin(freq * xyz))
+        parts.append(torch.cos(freq * xyz))
+    return torch.cat(parts, dim=-1)
+
+
+def _prepare_mlp_input(xyz: torch.Tensor, in_dim: int) -> torch.Tensor:
+    """
+    Match xyz to the expected MLP input dimension.
+
+    RigGS commonly uses sinusoidal positional encoding before the MLP:
+      raw xyz  → in_dim = 3
+      L=4 PE   → in_dim = 3*(2*4+1) = 27
+      L=6 PE   → in_dim = 3*(2*6+1) = 39
+      L=10 PE  → in_dim = 3*(2*10+1) = 63
+    """
+    if in_dim == 3:
+        return xyz
+
+    # Try to match known positional encoding sizes
+    for n_freqs in (4, 6, 8, 10, 12):
+        expected = 3 * (2 * n_freqs + 1)
+        if expected == in_dim:
+            return _positional_encoding(xyz, n_freqs)
+
+    # Fallback: pad or truncate
+    if xyz.shape[-1] >= in_dim:
+        return xyz[:, :in_dim]
+    return F.pad(xyz, (0, in_dim - xyz.shape[-1]))
+
+
+def _reconstruct_skinning_mlp(state: dict, prefix: str = "skinning_weight_mlp"):
+    """
+    Reconstruct the skinning weight MLP from entries in state dict.
+
+    RigGS architecture (from observed keys):
+        skinning_weight_mlp.linear.{0..N}.weight / .bias   ← hidden layers
+        skinning_weight_mlp.weight_predict.weight / .bias   ← output layer
+
+    Returns: (mlp: nn.Sequential, in_dim: int)
+    """
+    plen = len(prefix) + 1
+    sub = {k[plen:]: v for k, v in state.items() if k.startswith(prefix + ".")}
+
+    if not sub:
+        return None, None
+
+    # Collect hidden layer indices
+    indices = sorted({
+        int(m.group(1))
+        for k in sub
+        if (m := re.match(r"linear\.(\d+)\.weight", k))
+    })
+
+    if not indices:
+        return None, None
+
+    in_dim = sub[f"linear.{indices[0]}.weight"].shape[1]
+
+    layers: list = []
+    for i in indices:
+        w = sub[f"linear.{i}.weight"]
+        b = sub[f"linear.{i}.bias"]
+        lin = nn.Linear(w.shape[1], w.shape[0])
+        with torch.no_grad():
+            lin.weight.copy_(w)
+            lin.bias.copy_(b)
+        layers.append(lin)
+        layers.append(nn.ReLU())
+
+    # Output layer
+    w_out = sub["weight_predict.weight"]
+    b_out = sub["weight_predict.bias"]
+    lin_out = nn.Linear(w_out.shape[1], w_out.shape[0])
+    with torch.no_grad():
+        lin_out.weight.copy_(w_out)
+        lin_out.bias.copy_(b_out)
+    layers.append(lin_out)
+
+    return nn.Sequential(*layers), in_dim
+
+
+def _run_skinning_mlp(state: dict, canonical_xyz: torch.Tensor,
+                       n_joints: int) -> torch.Tensor:
+    """
+    Run the skinning_weight_mlp to obtain per-Gaussian skinning weights.
+
+    canonical_xyz: [N, 3]  canonical Gaussian positions
+    Returns: [N, n_joints] float32 (sum-to-1 per Gaussian)
+    """
+    mlp, in_dim = _reconstruct_skinning_mlp(state)
+
+    if mlp is None:
+        raise KeyError(
+            "skinning_weight_mlp not found in state dict. "
+            f"Available top-level prefixes: {_top_prefixes(state)}"
+        )
+
+    mlp.eval()
+    x = _prepare_mlp_input(canonical_xyz.cpu(), in_dim)
+    print(f"  skinning_weight_mlp: input_dim={in_dim}  "
+          f"(positional_encoding={'raw' if in_dim == 3 else 'PE'})")
+
+    with torch.no_grad():
+        logits = mlp(x)                            # [N, n_joints]
+
+    if logits.shape[1] != n_joints:
+        raise ValueError(
+            f"MLP output dim {logits.shape[1]} != n_joints {n_joints}. "
+            "The MLP architecture or n_joints count may be mismatched."
+        )
+
+    return torch.softmax(logits, dim=-1)           # [N, n_joints]
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+def load_lbs_weights(skeleton_dir: str, n_joints: int,
+                      canonical_xyz: torch.Tensor = None,
+                      device: str = "cpu") -> dict:
+    """
+    Compute per-Gaussian skinning weights from the RigGS skeleton checkpoint.
+
+    RigGS does NOT store skinning weights as a precomputed tensor.
+    Instead, it stores a skinning_weight_mlp whose weights are in the state dict.
+    This function reconstructs that MLP and runs a forward pass with the
+    canonical Gaussian positions to produce [N_gauss, N_joints] weights.
+
+    Args:
+        skeleton_dir:  Path to <riggs_output>/skeleton/ directory
+        n_joints:      Number of skeleton joints (must match MLP output dim)
+        canonical_xyz: [N, 3] canonical Gaussian positions.
+                       If None, attempts to load gs__xyz from the state dict.
+        device:        Target device for output tensors
 
     Returns dict:
-        lbs_weights    [N_gauss, N_j]   float32   (sum-to-1 per Gaussian, after softmax/norm)
-        motion_mask    [N_gauss]        bool      True = participates in deformation
-                                                  (all-True if not found in state dict)
+        lbs_weights   [N_gauss, N_j]  float32  per-Gaussian skinning weights (softmax)
+        motion_mask   [N_gauss]       bool     all True (RigGS uses the MLP for all Gaussians)
     """
-    # --- Find latest iteration ---
+    # --- Find latest iteration directory ---
     iter_dirs = sorted(glob.glob(os.path.join(skeleton_dir, "iteration_*")))
     if not iter_dirs:
         raise FileNotFoundError(f"No iteration_* directories found in {skeleton_dir}")
     latest = iter_dirs[-1]
 
-    # --- Find state dict file ---
-    ckpt_files = glob.glob(os.path.join(latest, "*.pth")) + \
-                 glob.glob(os.path.join(latest, "*.pt"))
+    # --- Load state dict ---
+    ckpt_files = (glob.glob(os.path.join(latest, "*.pth")) +
+                  glob.glob(os.path.join(latest, "*.pt")))
     if not ckpt_files:
         raise FileNotFoundError(f"No .pth/.pt files found in {latest}")
 
-    # Try each file until we find one with weight keys
     state = None
-    for f in ckpt_files:
+    for f in sorted(ckpt_files):
         try:
             state = torch.load(f, map_location="cpu")
+            print(f"  Loaded state dict from {f}")
             break
         except Exception:
             continue
     if state is None:
         raise RuntimeError(f"Could not load any checkpoint from {latest}")
 
-    # --- Extract LBS weights ---
-    WEIGHT_KEYS = [
-        "lbs_weights", "skinning_weights", "skin_weights",
-        "W", "blend_weights", "weights",
-    ]
-    weights_raw = None
-    for key in WEIGHT_KEYS:
-        if key in state:
-            weights_raw = state[key]
-            break
-    # Also search nested dicts (e.g. state["model"] or state["state_dict"])
-    if weights_raw is None:
-        for top_val in state.values():
-            if isinstance(top_val, dict):
-                for key in WEIGHT_KEYS:
-                    if key in top_val:
-                        weights_raw = top_val[key]
-                        break
-            if weights_raw is not None:
+    # --- Canonical Gaussian positions (needed as MLP input) ---
+    if canonical_xyz is None:
+        # RigGS saves Gaussian params inside the skeleton state dict under gs__* keys
+        for key in ("gs__xyz", "gs_xyz", "xyz"):
+            if key in state:
+                canonical_xyz = state[key].float()
+                print(f"  Using canonical xyz from state dict key '{key}' "
+                      f"({canonical_xyz.shape[0]} Gaussians)")
                 break
+        if canonical_xyz is None:
+            raise ValueError(
+                "canonical_xyz not provided and 'gs__xyz' not found in state dict. "
+                "Pass gaussians['xyz'] explicitly to load_lbs_weights()."
+            )
 
-    if weights_raw is None:
-        raise KeyError(
-            f"Could not find skinning weight tensor in {latest}.\n"
-            f"Available keys: {_flat_keys(state)}\n"
-            f"Please check the RigGS skeleton model and set the correct key."
-        )
+    # --- Compute skinning weights via MLP ---
+    print(f"  Running skinning_weight_mlp for {canonical_xyz.shape[0]} Gaussians…")
+    lbs_weights = _run_skinning_mlp(state, canonical_xyz, n_joints)
 
-    weights_raw = weights_raw.float()
-    if weights_raw.dim() == 2 and weights_raw.shape[1] == n_joints:
-        lbs_weights = torch.softmax(weights_raw, dim=-1)   # normalise
-    elif weights_raw.dim() == 2 and weights_raw.shape[0] == n_joints:
-        lbs_weights = torch.softmax(weights_raw.T, dim=-1)
-    else:
-        raise ValueError(
-            f"Unexpected weight shape {list(weights_raw.shape)} for {n_joints} joints."
-        )
+    # --- Motion mask (all Gaussians participate) ---
+    motion_mask = torch.ones(lbs_weights.shape[0], dtype=torch.bool)
 
-    # --- Extract motion mask (optional) ---
-    motion_mask = None
-    for key in ("motion_mask", "mask", "deform_mask"):
-        if key in state:
-            motion_mask = state[key].bool()
-            break
-    if motion_mask is None:
-        motion_mask = torch.ones(lbs_weights.shape[0], dtype=torch.bool)
-
-    print(f"LBS weights: {lbs_weights.shape}  motion_mask: {motion_mask.sum().item()} / {len(motion_mask)}")
+    print(f"  LBS weights: {lbs_weights.shape}")
     return {
-        "lbs_weights":  lbs_weights.to(device),
-        "motion_mask":  motion_mask.to(device),
+        "lbs_weights": lbs_weights.to(device),
+        "motion_mask": motion_mask.to(device),
     }
 
 
-def _flat_keys(d: dict, prefix: str = "") -> list:
-    keys = []
-    for k, v in d.items():
-        full = f"{prefix}{k}"
-        keys.append(full)
-        if isinstance(v, dict):
-            keys.extend(_flat_keys(v, prefix=full + "."))
-    return keys
+# ---------------------------------------------------------------------------
+# Utility
+# ---------------------------------------------------------------------------
+
+def _top_prefixes(d: dict) -> list:
+    """Return unique top-level key prefixes (before first dot)."""
+    return sorted({k.split(".")[0] for k in d})
