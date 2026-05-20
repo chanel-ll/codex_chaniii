@@ -55,9 +55,12 @@ def _get_projection_matrix(fovx: float, fovy: float,
     P = torch.zeros(4, 4, device=device)
     P[0, 0] = 1.0 / tanHalfFovX
     P[1, 1] = 1.0 / tanHalfFovY
-    P[3, 2] = 1.0
+    # 3DGS CUDA rasterizer reads matrices column-major (OpenGL convention).
+    # getProjectionMatrix in the original 3DGS is stored pre-transposed via .transpose(0,1).
+    # We must match that: z_sign goes to [2,3] and depth term goes to [3,2].
+    P[2, 3] = 1.0                                    # z_sign (was [3,2] in natural form)
     P[2, 2] = zfar / (zfar - znear)
-    P[2, 3] = -(zfar * znear) / (zfar - znear)
+    P[3, 2] = -(zfar * znear) / (zfar - znear)       # depth term (was [2,3] in natural form)
     return P
 
 
