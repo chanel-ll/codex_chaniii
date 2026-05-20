@@ -115,14 +115,24 @@ def _run_skinning_mlp(state: dict, canonical_xyz: torch.Tensor,
         b_out = sub["weight_predict.bias"]
         if w_out.shape[1] != h.shape[-1]:
             h = torch.cat([h, x_in], dim=-1)
-        logits = F.linear(h, w_out, b_out)           # [N, n_joints]
+        logits = F.linear(h, w_out, b_out)           # [N, mlp_joints]
 
-    if logits.shape[1] != n_joints:
+    mlp_joints = logits.shape[1]
+    weights = torch.softmax(logits, dim=-1)         # [N, mlp_joints]
+
+    if mlp_joints == n_joints:
+        pass  # exact match
+    elif mlp_joints == n_joints - 1:
+        # Root joint (index 0) excluded from MLP — prepend zero weight column
+        zeros = torch.zeros(weights.shape[0], 1)
+        weights = torch.cat([zeros, weights], dim=1)
+        print(f"  Root joint excluded from MLP — padded to [{weights.shape[0]}, {weights.shape[1]}]")
+    else:
         raise ValueError(
-            f"MLP output dim {logits.shape[1]} != n_joints {n_joints}."
+            f"MLP output dim {mlp_joints} cannot be reconciled with n_joints {n_joints}."
         )
 
-    return torch.softmax(logits, dim=-1)             # [N, n_joints]
+    return weights                                  # [N, n_joints]
 
 
 # ---------------------------------------------------------------------------
