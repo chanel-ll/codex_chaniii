@@ -36,8 +36,15 @@ def _predict_trajectories(model, data, model_type, device):
         elif model_type == "hamiltonian_ode":
             q0 = data["theta_train"][0].reshape(N_j, rot_dim)
             p0 = data["dtheta_train"][0].reshape(N_j, rot_dim)
-            q_interp, p_interp = model(q0, p0, data["t_train"])
-            q_extrap, p_extrap = model(q0, p0, data["t_extrap"])
+            # Integrate over the FULL time span [t_train[0] … t_extrap[-1]] from the
+            # same initial conditions, then slice.  Using t_extrap directly would only
+            # integrate for (t_extrap[-1]-t_extrap[0]) ≈ 0.2 time units instead of
+            # the required ~1.0 units, giving completely wrong extrap predictions.
+            T_train = data["T_train"]
+            t_full = torch.cat([data["t_train"], data["t_extrap"]])
+            q_full, p_full = model(q0, p0, t_full)
+            q_interp, p_interp = q_full[:T_train], p_full[:T_train]
+            q_extrap,  p_extrap  = q_full[T_train:], p_full[T_train:]
         else:
             raise ValueError(f"Unknown model_type: {model_type}")
     return q_interp, q_extrap, p_interp, p_extrap
