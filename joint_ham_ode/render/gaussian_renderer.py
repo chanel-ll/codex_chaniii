@@ -87,7 +87,9 @@ def _render_dgr(gaussians: dict, camera, background: torch.Tensor,
 
     means3D    = gaussians["xyz"]                              # [N, 3]
     shs        = gaussians["features"]                         # [N, K, 3]
-    scales     = torch.exp(gaussians["scaling"])               # [N, 3]
+    scales     = torch.exp(gaussians["scaling"])               # [N, 3] or [N, 1] if isotropic
+    if scales.shape[-1] == 1:
+        scales = scales.expand(-1, 3)                          # isotropic → broadcast
     rotations  = F.normalize(gaussians["rotation"], dim=-1)    # [N, 4]
     opacity    = torch.sigmoid(gaussians["opacity"])           # [N] or [N,1]
     if opacity.dim() == 1:
@@ -142,6 +144,8 @@ def _render_gsplat(gaussians: dict, camera, background: torch.Tensor,
     means     = gaussians["xyz"]
     quats     = F.normalize(gaussians["rotation"], dim=-1)
     scales    = torch.exp(gaussians["scaling"])
+    if scales.shape[-1] == 1:
+        scales = scales.expand(-1, 3)                          # isotropic → broadcast
     opacities = torch.sigmoid(gaussians["opacity"])
     colors    = gaussians["features"]                          # [N, K, 3]
 
