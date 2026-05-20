@@ -161,7 +161,7 @@ def _render_gsplat(gaussians: dict, camera, background: torch.Tensor,
         viewmats=viewmat, Ks=K,
         width=camera.width, height=camera.height,
         sh_degree=sh_degree,
-        backgrounds=background.unsqueeze(0),
+        backgrounds=background.to(device),  # [C] — gsplat rasterize_to_pixels expects (C,)
     )
     return renders[0].permute(2, 0, 1).clamp(0.0, 1.0)        # [3, H, W]
 
