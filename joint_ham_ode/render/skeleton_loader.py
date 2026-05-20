@@ -5,7 +5,6 @@ import re
 import glob
 import numpy as np
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 
 
@@ -66,55 +65,6 @@ def _prepare_mlp_input(xyz: torch.Tensor, in_dim: int) -> torch.Tensor:
     return F.pad(xyz, (0, in_dim - xyz.shape[-1]))
 
 
-def _reconstruct_skinning_mlp(state: dict, prefix: str = "skinning_weight_mlp"):
-    """
-    Reconstruct the skinning weight MLP from entries in state dict.
-
-    RigGS architecture (from observed keys):
-        skinning_weight_mlp.linear.{0..N}.weight / .bias   ← hidden layers
-        skinning_weight_mlp.weight_predict.weight / .bias   ← output layer
-
-    Returns: (mlp: nn.Sequential, in_dim: int)
-    """
-    plen = len(prefix) + 1
-    sub = {k[plen:]: v for k, v in state.items() if k.startswith(prefix + ".")}
-
-    if not sub:
-        return None, None
-
-    # Collect hidden layer indices
-    indices = sorted({
-        int(m.group(1))
-        for k in sub
-        if (m := re.match(r"linear\.(\d+)\.weight", k))
-    })
-
-    if not indices:
-        return None, None
-
-    in_dim = sub[f"linear.{indices[0]}.weight"].shape[1]
-
-    layers: list = []
-    for i in indices:
-        w = sub[f"linear.{i}.weight"]
-        b = sub[f"linear.{i}.bias"]
-        lin = nn.Linear(w.shape[1], w.shape[0])
-        with torch.no_grad():
-            lin.weight.copy_(w)
-            lin.bias.copy_(b)
-        layers.append(lin)
-        layers.append(nn.ReLU())
-
-    # Output layer
-    w_out = sub["weight_predict.weight"]
-    b_out = sub["weight_predict.bias"]
-    lin_out = nn.Linear(w_out.shape[1], w_out.shape[0])
-    with torch.no_grad():
-        lin_out.weight.copy_(w_out)
-        lin_out.bias.copy_(b_out)
-    layers.append(lin_out)
-
-    return nn.Sequential(*layers), in_dim
 
 
 def _run_skinning_mlp(state: dict, canonical_xyz: torch.Tensor,
@@ -122,32 +72,57 @@ def _run_skinning_mlp(state: dict, canonical_xyz: torch.Tensor,
     """
     Run the skinning_weight_mlp to obtain per-Gaussian skinning weights.
 
-    canonical_xyz: [N, 3]  canonical Gaussian positions
-    Returns: [N, n_joints] float32 (sum-to-1 per Gaussian)
-    """
-    mlp, in_dim = _reconstruct_skinning_mlp(state)
+    RigGS uses a NeRF-style MLP with skip connections: at certain layers the
+    original positional-encoded input is concatenated back to the hidden state.
+    We detect this automatically by comparing each layer's expected input dim
+    against the actual current hidden dim.
 
-    if mlp is None:
+    canonical_xyz: [N, 3]  canonical Gaussian positions
+    Returns: [N, n_joints] float32 (sum-to-1 per Gaussian, softmax applied)
+    """
+    prefix = "skinning_weight_mlp"
+    sub = {k[len(prefix) + 1:]: v for k, v in state.items()
+           if k.startswith(prefix + ".")}
+
+    if not sub:
         raise KeyError(
             "skinning_weight_mlp not found in state dict. "
             f"Available top-level prefixes: {_top_prefixes(state)}"
         )
 
-    mlp.eval()
-    x = _prepare_mlp_input(canonical_xyz.cpu(), in_dim)
-    print(f"  skinning_weight_mlp: input_dim={in_dim}  "
-          f"(positional_encoding={'raw' if in_dim == 3 else 'PE'})")
+    indices = sorted({
+        int(m.group(1))
+        for k in sub
+        if (m := re.match(r"linear\.(\d+)\.weight", k))
+    })
 
+    in_dim = sub[f"linear.{indices[0]}.weight"].shape[1]
+    x_in = _prepare_mlp_input(canonical_xyz.cpu(), in_dim)  # [N, in_dim]
+    print(f"  skinning_weight_mlp: input_dim={in_dim}  "
+          f"({'raw xyz' if in_dim == 3 else f'PE (L={(in_dim//3-1)//2})'})")
+
+    h = x_in
     with torch.no_grad():
-        logits = mlp(x)                            # [N, n_joints]
+        for i in indices:
+            w = sub[f"linear.{i}.weight"]
+            b = sub[f"linear.{i}.bias"]
+            # Skip connection: concat original input when dim mismatch
+            if w.shape[1] != h.shape[-1]:
+                h = torch.cat([h, x_in], dim=-1)
+            h = F.relu(F.linear(h, w, b))
+
+        w_out = sub["weight_predict.weight"]
+        b_out = sub["weight_predict.bias"]
+        if w_out.shape[1] != h.shape[-1]:
+            h = torch.cat([h, x_in], dim=-1)
+        logits = F.linear(h, w_out, b_out)           # [N, n_joints]
 
     if logits.shape[1] != n_joints:
         raise ValueError(
-            f"MLP output dim {logits.shape[1]} != n_joints {n_joints}. "
-            "The MLP architecture or n_joints count may be mismatched."
+            f"MLP output dim {logits.shape[1]} != n_joints {n_joints}."
         )
 
-    return torch.softmax(logits, dim=-1)           # [N, n_joints]
+    return torch.softmax(logits, dim=-1)             # [N, n_joints]
 
 
 # ---------------------------------------------------------------------------
