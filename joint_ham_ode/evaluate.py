@@ -74,17 +74,23 @@ def _load_standalone_render_assets(args, device):
         raise FileNotFoundError(f"No point_cloud.ply found under {riggs_dir}/point_cloud/")
     gaussians = load_3dgs_ply(ply_candidates[-1], device=device)
 
-    # skeleton_tree.npz
+    # skeleton_tree.npz — provides parents and template joint count
     skel = load_skeleton_tree(os.path.join(riggs_dir, "skeleton_tree.npz"), device=device)
 
     # skinning weights from skeleton/iteration_XXXX/
-    # canonical_xyz is passed so the skinning_weight_mlp can be run
+    # Also extracts trained joint positions and passes motion_mask from PLY fea_* attributes
     lbs = load_lbs_weights(
         os.path.join(riggs_dir, "skeleton"),
         n_joints=skel["joints"].shape[0],
         canonical_xyz=gaussians["xyz"].cpu(),
+        motion_mask_from_ply=gaussians.get("motion_mask"),
         device=device,
     )
+
+    # Use trained joint positions if available (more accurate than template after training)
+    if lbs.get("trained_joints") is not None:
+        skel["joints"] = lbs["trained_joints"]
+        print(f"  Using trained joint positions from skeleton.pth")
 
     # cameras from transforms_train.json
     cameras_all = None

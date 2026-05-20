@@ -164,7 +164,11 @@ def apply_lbs(canonical_xyz: torch.Tensor,
     deformed = blended[:, :3]
 
     if motion_mask is not None:
-        deformed = torch.where(motion_mask.unsqueeze(-1), deformed, canonical_xyz)
+        # motion_mask can be bool or float [N]
+        # float: soft blend weight (sigmoid output from RigGS fea_* attributes)
+        # bool:  hard on/off mask
+        mask = motion_mask.float().unsqueeze(-1)   # [N, 1]
+        deformed = mask * deformed + (1.0 - mask) * canonical_xyz
 
     return deformed
 
@@ -179,7 +183,7 @@ def apply_lbs_rotation(canonical_rot: torch.Tensor,
     canonical_rot: [N, 4]  (w,x,y,z) unit quaternions
     skinning_T:    [N_j, 4, 4]
     lbs_weights:   [N, N_j]
-    motion_mask:   [N] bool
+    motion_mask:   [N] bool or float
 
     Returns: deformed_rot [N, 4] unit quaternions
     """
@@ -194,7 +198,8 @@ def apply_lbs_rotation(canonical_rot: torch.Tensor,
     q_deformed = matrix_to_quat(R_deformed)        # [N, 4]
 
     if motion_mask is not None:
-        q_deformed = torch.where(motion_mask.unsqueeze(-1), q_deformed, canonical_rot)
+        mask = motion_mask.float().unsqueeze(-1)   # [N, 1]
+        q_deformed = mask * q_deformed + (1.0 - mask) * canonical_rot
 
     return q_deformed
 
