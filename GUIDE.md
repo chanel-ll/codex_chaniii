@@ -269,10 +269,21 @@ done
 
 ## 5. 결과 비교 테이블 예시
 
-| 방법 | Interp MAE (deg) | Extrap MAE (deg) | ΔH_mean |
-|---|---|---|---|
-| Neural ODE | - | - | - |
-| Hamiltonian ODE (M=I) | - | - | - |
+05.20 update
+=======================================================
+Metric                         Neural ODE    Ham ODE
+=======================================================
+Joint MAE Interp (deg)            29.4445     0.7187
+Joint MAE Extrap (deg)             1.6333    39.5549
+PSNR Interp (dB)                  19.5128    21.4503
+PSNR Extrap (dB)                  18.6279    18.4794
+LPIPS Interp                       0.1404     0.1019
+LPIPS Extrap                       0.1782     0.1756
+-------------------------------------------------------
+ΔH_mean (Ham only)                        0.008344
+ΔH_max  (Ham only)                        0.015235
+=======================================================
+
 
 **Phase 1 통과 기준**: Extrap MAE: Ham-ODE ≤ Neural ODE
 
