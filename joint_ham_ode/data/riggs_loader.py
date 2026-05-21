@@ -191,6 +191,8 @@ def load_npz_full(path: str, device: str = "cuda") -> dict:
         out["joint_position"] = torch.from_numpy(arr["joint_position"]).float().to(device)
     if "parent_indices" in arr:
         out["parent_indices"] = torch.from_numpy(arr["parent_indices"]).long().to(device)
+    if "global_trans" in arr:
+        out["global_trans"] = torch.from_numpy(arr["global_trans"]).float().to(device)
 
     T, N_j, rot_dim = theta.shape
     print(f"Loaded trajectory: T={T}, N_j={N_j}, rot_dim={rot_dim}  ({path})")
