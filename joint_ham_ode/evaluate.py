@@ -116,9 +116,14 @@ def _load_standalone_render_assets(args, device):
 
 
 def _run_rendering(gaussians, skel, lbs, cameras_all, background,
-                    q_interp, q_extrap, T_train, output_dir, fps, device):
+                    q_interp, q_extrap, T_train, output_dir, fps, device,
+                    global_trans_traj=None):
     from .render.gaussian_renderer import render_trajectory
     from .render.camera_utils import load_gt_image
+
+    skip_rotation = gaussians.get("is_isotropic", False)
+    if skip_rotation:
+        print("  Isotropic GS detected — skipping Gaussian rotation (matches RigGS)")
 
     results = {}
     for tag, q_traj in [("interp", q_interp), ("extrap", q_extrap)]:
@@ -135,6 +140,15 @@ def _run_rendering(gaussians, skel, lbs, cameras_all, background,
             idxs = [int(i * len(cameras) / T) for i in range(T)]
             cameras = [cameras[i] for i in idxs]
 
+        # Slice global_trans for this segment
+        gt_traj = None
+        if global_trans_traj is not None:
+            gt_full = global_trans_traj
+            gt_traj = gt_full[:T_train] if tag == "interp" else gt_full[T_train:]
+            if len(gt_traj) != T:
+                idxs = [int(i * len(gt_traj) / T) for i in range(T)]
+                gt_traj = gt_traj[idxs]
+
         print(f"  Rendering {tag} ({len(cameras)} frames)…")
         pred_frames = render_trajectory(
             gaussians, q_traj,
@@ -142,6 +156,8 @@ def _run_rendering(gaussians, skel, lbs, cameras_all, background,
             lbs["lbs_weights"], cameras,
             motion_mask=lbs["motion_mask"],
             background=background,
+            skip_rotation=skip_rotation,
+            global_trans_traj=gt_traj,
         )
 
         gt_frames = [load_gt_image(cam, device=device) for cam in cameras]
@@ -209,10 +225,14 @@ def main():
     print(f"Loaded {model_type} from {args.checkpoint}")
 
     timestamps = None
+    global_trans_traj = None
     if args.theta_path.endswith(".npz"):
         npz_data = load_npz_full(args.theta_path, device=device)
         theta = npz_data["theta"]
         timestamps = npz_data.get("timestamps")
+        global_trans_traj = npz_data.get("global_trans")  # [T, 3] or None
+        if global_trans_traj is not None:
+            print(f"  global_trans loaded: {global_trans_traj.shape}")
     else:
         theta = load_preextracted(args.theta_path, device=device)
     data = prepare_data(theta, time_split=config["data"]["time_split"], timestamps=timestamps)
@@ -247,6 +267,7 @@ def main():
             render_results = _run_rendering(
                 gaussians, skel, lbs, cameras_all, background,
                 q_interp, q_extrap, T_train, output_dir, args.render_fps, device,
+                global_trans_traj=global_trans_traj,
             )
             for tag, m in render_results.items():
                 results[f"render_{tag}"] = m

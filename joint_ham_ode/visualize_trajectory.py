@@ -128,32 +128,15 @@ def fk_positions(rest_joints, parents, quats):
     rest_joints: [N_j, 3]
     parents:     [N_j] int
     quats:       [T, N_j, 4]
-    Returns:     [T, N_j, 3]  world joint positions
+    Returns:     [T, N_j, 3]  world joint positions (RigGS-compatible FK)
     """
+    from .render.fk_lbs import riggs_chain_fk
     T, N_j, _ = quats.shape
-    device = quats.device
-    R_all = _quat_to_matrix(quats)  # [T, N_j, 3, 3]
-
-    T_mats = torch.eye(4, device=device).unsqueeze(0).unsqueeze(0).repeat(T, N_j, 1, 1)
-
-    for j in range(N_j):
-        p = int(parents[j].item())
-        if j == 0:
-            offset = rest_joints[j]
-        else:
-            offset = rest_joints[j] - rest_joints[p]
-
-        L = torch.eye(4, device=device).unsqueeze(0).repeat(T, 1, 1)   # [T, 4, 4]
-        L[:, :3, :3] = R_all[:, j]
-        L[:, :3,  3] = offset.unsqueeze(0)
-
-        if j == 0:
-            T_mats[:, j] = L
-        else:
-            T_mats[:, j] = torch.bmm(T_mats[:, p], L)
-
-    positions = T_mats[:, :, :3, 3]   # [T, N_j, 3]
-    return positions.cpu().numpy()
+    posed_list = []
+    for t in range(T):
+        _, posed = riggs_chain_fk(quats[t], rest_joints, parents)
+        posed_list.append(posed)
+    return torch.stack(posed_list).cpu().numpy()   # [T, N_j, 3]
 
 
 # ---------------------------------------------------------------------------

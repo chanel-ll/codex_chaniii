@@ -57,7 +57,8 @@ def load_3dgs_ply(path: str, device: str = "cpu") -> dict:
         [p.name for p in v.properties if p.name.startswith("scale_")],
         key=lambda n: int(n.split("_")[-1]),
     )
-    scaling = np.stack([np.asarray(v[n]) for n in scale_names], axis=1)  # [N, 3]
+    scaling = np.stack([np.asarray(v[n]) for n in scale_names], axis=1)  # [N, 1 or 3]
+    is_isotropic = len(scale_names) == 1  # RigGS use_isotropic_gs=True stores only scale_0
 
     rot_names = sorted(
         [p.name for p in v.properties if p.name.startswith("rot")],
@@ -78,13 +79,14 @@ def load_3dgs_ply(path: str, device: str = "cpu") -> dict:
         motion_mask = np.ones(N, dtype=np.float32)
         print(f"  No fea_* attributes found — motion_mask set to all-ones")
 
-    print(f"Loaded {N} Gaussians (sh_degree={sh_degree}) from {path}")
+    print(f"Loaded {N} Gaussians (sh_degree={sh_degree}, isotropic={is_isotropic}) from {path}")
     return {
-        "xyz":         torch.from_numpy(xyz).float().to(device),
-        "features":    torch.from_numpy(features).float().to(device),
-        "opacity":     torch.from_numpy(opacity).float().to(device),
-        "scaling":     torch.from_numpy(scaling).float().to(device),
-        "rotation":    torch.from_numpy(rotation).float().to(device),
-        "sh_degree":   sh_degree,
-        "motion_mask": torch.from_numpy(motion_mask.astype(np.float32)).to(device),  # [N]
+        "xyz":          torch.from_numpy(xyz).float().to(device),
+        "features":     torch.from_numpy(features).float().to(device),
+        "opacity":      torch.from_numpy(opacity).float().to(device),
+        "scaling":      torch.from_numpy(scaling).float().to(device),
+        "rotation":     torch.from_numpy(rotation).float().to(device),
+        "sh_degree":    sh_degree,
+        "motion_mask":  torch.from_numpy(motion_mask.astype(np.float32)).to(device),
+        "is_isotropic": is_isotropic,
     }

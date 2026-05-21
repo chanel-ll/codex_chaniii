@@ -217,12 +217,16 @@ def render_trajectory(gaussians_canonical: dict,
                        cameras: list,
                        motion_mask: torch.Tensor = None,
                        background: torch.Tensor = None,
-                       sh_degree: int = None) -> list:
+                       sh_degree: int = None,
+                       skip_rotation: bool = False,
+                       global_trans_traj: torch.Tensor = None) -> list:
     """
     Render a full trajectory frame-by-frame.
 
-    theta_traj: [T, N_j, 4]  predicted joint rotations
-    cameras:    list of Camera (length T)
+    theta_traj:       [T, N_j, 4]  predicted joint rotations
+    cameras:          list of Camera (length T)
+    skip_rotation:    True for isotropic GS (matches RigGS use_isotropic_gs=True)
+    global_trans_traj:[T, 3] or None  per-frame global translation from RigGS PoseMLP
 
     Returns: list of [3, H, W] tensors.
     """
@@ -230,10 +234,13 @@ def render_trajectory(gaussians_canonical: dict,
 
     frames = []
     for t, cam in enumerate(cameras):
+        gt = global_trans_traj[t] if global_trans_traj is not None else None
         deformed = deform_gaussians(
             gaussians_canonical,
             theta_traj[t],
             rest_joints, parents, lbs_weights, motion_mask,
+            skip_rotation=skip_rotation,
+            global_trans=gt,
         )
         frames.append(render_gaussians(deformed, cam, background=background, sh_degree=sh_degree))
 
